@@ -1,7 +1,16 @@
+import subprocess
+import sys
+
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
+
+# plotly가 설치되어 있지 않으면(requirements.txt가 적용되지 않은 경우) 자동으로 설치
+try:
+    import plotly.graph_objects as go
+except ModuleNotFoundError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "plotly"])
+    import plotly.graph_objects as go
 
 DATA_URL = (
     "https://raw.githubusercontent.com/greatsong/modudata/"
@@ -62,6 +71,20 @@ n_years = len(yearly)
 start_year = int(yearly["연도"].min())
 end_year = int(yearly["연도"].max())
 
+# 최근 20년(끝 연도 포함 20개 연도 구간) 회귀
+RECENT_YEARS = 20
+recent = yearly[yearly["연도"] > end_year - RECENT_YEARS]
+has_recent = len(recent) >= 3
+if has_recent:
+    xr = recent["연도"].to_numpy(dtype=float)
+    yr = recent["연평균기온"].to_numpy(dtype=float)
+    slope_recent, _ = np.polyfit(xr, yr, 1)
+    r_recent = float(np.corrcoef(xr, yr)[0, 1])
+    recent_start = int(recent["연도"].min())
+    recent_n = len(recent)
+
+per100_all = slope * 100
+
 # --- 슬라이더와 예측값 ---
 year = st.slider("예측할 연도", SLIDER_MIN, SLIDER_MAX, 2030, step=1)
 pred = slope * year + intercept
@@ -76,16 +99,71 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- 회귀 정보 ---
+# --- 100년당 기온 변화 (기울기 × 100) ---
+st.markdown(
+    f"""
+    <div style="text-align:center; padding:0.8rem 0 0.2rem 0;">
+        <div style="font-size:1.1rem; opacity:0.7;">
+            회귀 직선 기울기: 100년에 오르는 기온 ({start_year}~{end_year}년 전체 기간)
+        </div>
+        <div style="font-size:4.5rem; font-weight:800; line-height:1.1;">
+            {per100_all:+.2f} ℃ / 100년
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# --- 회귀 직선 정보 (전체 기간) ---
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("회귀 직선에 사용한 해의 개수", f"{n_years}개")
 c2.metric("시작 연도", f"{start_year}년")
 c3.metric("끝 연도", f"{end_year}년")
 c4.metric("상관계수 (r)", f"{r:.3f}")
 
+# --- 전체 기간 vs 최근 20년 비교 ---
+st.subheader("기울기 비교: 전체 기간 vs 최근 20년")
+col_all, col_recent = st.columns(2)
+
+with col_all:
+    st.markdown("#### 전체 기간")
+    st.markdown(
+        f"<div style='font-size:2.8rem; font-weight:700;'>{per100_all:+.2f} ℃ / 100년</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"{start_year}~{end_year}년 · {n_years}개 해 · 상관계수 r = {r:.3f} · "
+        f"기울기 {slope:+.4f} ℃/년"
+    )
+
+with col_recent:
+    st.markdown(f"#### 최근 {RECENT_YEARS}년")
+    if has_recent:
+        per100_recent = slope_recent * 100
+        st.markdown(
+            f"<div style='font-size:2.8rem; font-weight:700;'>{per100_recent:+.2f} ℃ / 100년</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"{recent_start}~{end_year}년 · {recent_n}개 해 · 상관계수 r = {r_recent:.3f} · "
+            f"기울기 {slope_recent:+.4f} ℃/년"
+        )
+    else:
+        st.info("최근 20년 구간의 데이터가 부족해 계산하지 못했습니다.")
+
+if has_recent:
+    diff = per100_recent - per100_all
+    ratio_txt = ""
+    if per100_all != 0:
+        ratio_txt = f" (전체 기간의 약 {per100_recent / per100_all:.1f}배)"
+    st.write(
+        f"최근 {RECENT_YEARS}년 기준으로 환산하면 100년에 **{per100_recent:+.2f} ℃**로, "
+        f"전체 기간보다 **{diff:+.2f} ℃**만큼 차이가 납니다{ratio_txt}. "
+        f"다만 {recent_n}개 해만으로 구한 기울기라 연도별 변동의 영향을 크게 받습니다."
+    )
+
 st.write(
-    f"회귀식: 연평균기온 = **{slope:.4f}** × 연도 + **{intercept:.2f}**  "
-    f"(10년당 약 {slope * 10:+.2f} ℃)"
+    f"회귀식(전체 기간): 연평균기온 = **{slope:.4f}** × 연도 + **{intercept:.2f}**"
 )
 
 # --- Plotly 그래프 ---
